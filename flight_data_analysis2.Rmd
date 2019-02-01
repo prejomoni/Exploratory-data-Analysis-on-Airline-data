@@ -1,5 +1,5 @@
 ---
-title: "Flight data analysis Notebook"
+title: "Airline data analysis Notebook"
 output:
   word_document: default
   pdf_document: default
@@ -9,7 +9,6 @@ editor_options:
 ---
 
 ```{r}
-#UPX Academy Project1 of module "Data Analytics with Python"
 
 #clear Environment
 rm(list=ls())
