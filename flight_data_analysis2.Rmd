@@ -1,0 +1,327 @@
+---
+title: "Flight data analysis Notebook"
+output:
+  word_document: default
+  pdf_document: default
+  html_notebook: default
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+#UPX Academy Project1 of module "Data Analytics with Python"
+
+#clear Environment
+rm(list=ls())
+
+#Packages to install
+
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(MUCflights)
+library(tidyr)
+
+```
+############  1. Importing and Exploring data
+```{r}
+
+fdata=read.csv("flight_data.csv",header=TRUE,stringsAsFactors = FALSE)
+
+#dimention of data 
+dim(fdata)
+```
+
+```{r}
+#Summary of dataframe
+summary(fdata)
+```
+
+```{r}
+#Details of each column and type of it 
+str(fdata)
+```
+
+```{r}
+#Number of na's in each column 
+data.frame(colSums(is.na(fdata)))
+#There are missing values in dep_time,dep_delay,arr_time,arr_delay,tailnum and air_time
+```
+
+```{r}
+#Number of origin i.e 3 origins
+levels(factor(fdata[,'origin']))
+
+#Number of Destination i.e 105 destination
+levels(factor(fdata[,'dest']))
+
+#data.frame(table(fdata[,'flight']))
+```
+####################2.Data Cleaning
+
+```{r}
+# filling Missing values
+head(fdata)
+attach(fdata)
+
+#2.1 filling arr_delay
+# arr_delay can be filled by subtracting arr_time and sched_arr_time 
+# To calculate arr_delay need to condider timezone offset from UTC,daylight and name of timezone
+
+#olson is name of timezone is obtained by airportdata for origin and destination
+airport_data = read.csv("airport_data.csv",sep=",",stringsAsFactors = FALSE ,col.names = c("AirportID","Name","City","Country","IATA","ICAO","Latitutde","Longtitude","Altitude","Timezone","DST","Olson","Type","Source"))
+
+#Destination
+#Finding Olson name(timezone name) by inner join of fdata and airport_data
+
+dtz= inner_join(data.frame(IATA=fdata$dest),airport_data[,c("IATA","Olson","Latitutde","Longtitude")],by = "IATA")
+colnames(dtz)=c("IATA","olson","dest_lati","dest_long")
+str(dtz)
+#Origin
+otz= inner_join(data.frame(IATA=fdata$origin),airport_data[,c("IATA","Olson","Latitutde","Longtitude")],by = "IATA")
+colnames(otz)=c("IATA","olson","origin_lati","origin_long")
+str(dtz)
+
+#Creating two column of dest and origin Olson names 
+fdata$olson_dest = dtz$olson
+fdata$olson_origin = otz$olson
+str(fdata)
+
+
+make_time = function(y,m,d,h,min,timez){
+  date=paste(y,m,d,sep = "-")
+  time=paste(h,min,00,sep=":")
+  dt=paste(date,time,sep = " ")
+ t=as.POSIXct(dt,format="%Y-%m-%d %H:%M:%S",tz="UTC")
+  force_tz(t,timez)
+}
+make_time(2018,1,23,14,38,"Asia/Calcutta")
+#Updating dep_time,sched_dep_time,sched_arr_time and arr_time
+fdata$dep_time<-make_time(year,month,day,floor(fdata$dep_time/100),fdata$dep_time%%100,fdata$olson_origin)
+fdata$sched_dep_time <- make_time(year,month,day,floor(fdata$sched_dep_time/100),fdata$sched_dep_time%%100,fdata$olson_origin)
+fdata$sched_arr_time <- make_time(year,month,day,floor(fdata$sched_arr_time/100),fdata$sched_arr_time%%100,fdata$olson_dest)
+fdata$arr_time<- make_time(year,month,day,floor(fdata$arr_time/100),fdata$arr_time%%100,fdata$olson_dest)
+
+#filling nas with value in arr_delay
+fdata$arr_delay=  as.numeric(difftime(fdata$arr_time,fdata$sched_arr_time,units = "mins"))
+
+#Creating new columns of utc time
+fdata$dep_timeUTC = with_tz(fdata$dep_time,"UTC") 
+fdata$sched_dep_timeUTC = with_tz(fdata$sched_dep_time,"UTC")
+fdata$arr_timeUTC = with_tz(fdata$arr_time,"UTC")
+fdata$sched_arr_timeUTC=with_tz(fdata$sched_arr_time,"UTC")
+
+#x= data.frame(c,fdata$arr_delay,fdata$arr_time,fdata$sched_arr_time,fdata$olson_dest)
+data.frame(colSums(is.na(fdata)))
+summary(fdata)
+
+```
+
+
+```{r}
+#2.2
+attach(fdata)
+table(origin)
+#departure delay vs arrival delay
+p=ggplot(fdata,aes(dep_delay,arr_delay))+xlim(-50,500)
+p+geom_point(aes(color=fdata$origin))
+#From observation of plots :-
+#1. In all three origins there is outliers
+#2. Seeing to plot there is positive correlation between dep_delay and arr_delay
+#3. Some flights departured exact time but arrived early
+#4. Only one flight departed early i.e -43
+#5. JFK origin flights arrived early  even though departed late
+#6. Most of the LGA origin flights reached destination in time i.e arrival delay is less.
+#7. LGA time management is good 
+
+p+geom_point(alpha=0.3,aes(color=as.factor(origin)))+facet_grid(.~origin)
+#Again LGA has good time management 
+
+#Departure delay month wise
+ggplot(fdata,aes(as.factor(month),dep_delay))+
+  geom_boxplot(alpha=0.2,aes(fill=as.factor(origin)))+ylim(-50,700)
+#From plot 
+#1. June and july(6 and 7) more number flights departed from all 3 origins
+#2. In month of 3,4,5,6,7 and 12 more number of flights departed from origin EWR
+#3. In month 9,10 and 11 less number of flights departed 
+
+
+
+
+#departure delay in each origin 
+fdata %>% select(dep_delay,origin)%>%filter(dep_delay>0) %>% group_by(origin) %>% summarise(sum(dep_delay))
+#EWR has more departure delay
+#In which month more departure delays
+mm=fdata %>% select(dep_delay,origin,month,day) %>%  
+          filter(dep_delay>0) %>%        
+          group_by(month,origin)%>% 
+          summarise(total=sum(dep_delay))
+
+mm%>% spread(origin,total) %>%
+          mutate(total=sum(EWR,JFK,LGA))%>%
+          mutate(EWR_per = (EWR/total)*100,JFK_per = (JFK/total)*100,LGA_per = (LGA/total)*100)
+#Seeing to this LGA is best airport interms of departure delay
+
+ggplot(mm,aes(month,total,fill=as.factor(origin)))+geom_col(width = 0.3)+facet_grid(.~origin)
+# From visulaization 
+# 1. Month 6 and 7 has more delay compare to other months for all origins
+# 2. EWR has more delay  
+
+#Reasons for more delay on month 6 and 7 ?
+
+#Add new column for fdata i.e days_of_week
+fdata$day_of_week = weekdays(as.POSIXct(fdata$sched_dep_timeUTC))
+#departure with  repect to weekdays and weekends
+ggplot(fdata,aes(day_of_week,fill=as.factor(origin)))+geom_bar()
+#Surprised weekends are less departured than weekdays
+#Tuesdays has more number of departure
+
+
+##Does days of a week  matter for departure delay/ arrival delay
+fdata %>% 
+  select(month,day,day_of_week,origin,dep_delay) %>% filter(dep_delay>0) %>%
+  group_by(day_of_week) %>% summarise(total=sum(dep_delay)) 
+
+ggplot(fdata,aes(day_of_week,dep_delay))+geom_col()
+
+#Friday more delay does it mean more number of flights on thursday
+fdata %>% select(day_of_week)%>% group_by(day_of_week) %>% table() %>% sort()
+
+
+
+# does speed matter for departure delay
+#Travel duration
+time = as.double(difftime(fdata$arr_time,fdata$dep_time,units = "hour")) 
+summary(time)
+#To Crosscheck 
+#y= data.frame(time,fdata$arr_time,fdata$dep_time)
+#some time difference is negative due to timezones
+
+#calculating speed
+fdata$speed = fdata$distance*60 / air_time
+
+ggplot(fdata,aes(speed,arr_delay)) + geom_point()+xlab("Speed miles per hour")
+
+avgSpeed=fdata %>% select(speed,tailnum) %>% group_by(tailnum) %>% summarise(avg_speed=mean(speed,na.rm = TRUE))
+
+
+ggplot(fdata,aes(distance))+geom_histogram()
+#From visulaization
+# 1. Speed is negative value i.e we have to consider timezone to calculate speed 
+# 2. so convert local time to standard time i.e UTC timezone
+
+
+
+
+
+```
+####################3.Exploring Destination
+```{r}
+#Explore with destination 
+# v=data.frame(fdata%>% select(dest) %>% table())
+# dim()=c("names","count")
+# 
+# ggplot(as.data.frame(v),aes(v)) + geom_bar() + geom_count()
+v=fdata%>% select(dest,origin) %>% table()
+v= data.frame(v) 
+
+
+#Number of flights for each destination from each origin
+ggplot(v,aes(x=v$dest,y=v$Freq,fill=as.factor(origin))) + geom_bar(stat="identity")+coord_polar(theta = "x",direction = 1) 
+
+v1=v%>% filter(Freq >1000)
+
+label_data= v1 %>% select(dest,Freq) %>% group_by(dest) %>%summarise(total=sum(Freq))
+
+ggplot(v1,aes(x=v1$dest,y=v1$Freq,fill=as.factor(origin))) + geom_bar(stat="identity")+coord_polar() +
+  stat_summary(fun.y=sum,aes(label=..y..,group=dest),geom="text",vjust=-0.2,angle=30)
+#From visulaization
+#1. More number of flights for destination ORD
+#2. More number of flights are from EWR
+
+ 
+
+  
+```
+
+####################4.Exploring with airlines
+```{r}
+#Exploring with airline data 
+airline_data = read.csv("airlines_data.csv",stringsAsFactors = FALSE)
+#select columns which are required for analysis
+str(airline_data)
+airline_data = airline_data[,c(2,4,7)]
+colnames(airline_data) = c("Airlines_name","carrier","Country")
+#appending 3 columns Airlines name and country with respect carrier code 
+
+ad= inner_join(data.frame(carrier=fdata$carrier),airline_data,by="carrier")
+summary(ad)
+#Appending another two new columns of airline name and country of it
+fdata$airlines=ad$Airlines_name
+fdata$country=ad$Country
+
+ggplot(fdata,aes(airlines,fill=as.factor(origin)))+geom_bar()+coord_polar()
+#from visulaization
+#1. United airlines and atlantic southeas are from EWR
+#2. JetBlue airways and delta air lines are from JFK
+airline_analysis = fdata %>% select(airlines,dep_delay,speed,distance) %>% group_by(airlines) %>% summarise(trips=n(),dep_delay=sum(dep_delay,na.rm = TRUE),speed = mean(speed,na.rm = TRUE),dist_min=min(distance),dist_max=max(distance))
+airline_analysis
+ 
+ggplot(airline_analysis,aes(airline_analysis$trips,airline_analysis$dep_delay,color=as.factor(airlines))) + geom_jitter(height = 2,width = 2) +geom_text(data=airline_analysis,label=airline_analysis$airlines,vjust=-1)
+#From visulaization
+#1.Jetblue airways,united airways,atlantic souteast and delta airlines 
+#2 US Airways and delta air lines has less delay corresponding to there number of trips
+ggplot(airline_analysis,aes(airline_analysis$airlines,airline_analysis$speed))+geom_bar(stat="identity")+
+  theme(axis.text.x=element_text(angle = 90,hjust=1,vjust=0.5))+coord_flip()
+#hawalian airlines have  highest speed 
+
+
+```
+
+####################5.Departure delay by season
+```{r}
+season <- function(m){
+        if_else(( m >=12 || m <= 2) ,"winter",
+          if_else( (m>=3 && m<=5), "Spring",
+          if_else( (m>=6 && m<=8), "Summer","Autumn")))
+          
+}
+fdata$season = unlist(lapply(fdata$month,season))
+
+#departure delay with respect season
+ggplot(fdata,aes(fdata$season,fdata$dep_delay,fill=season))+geom_bar(stat="identity")
+ggplot(fdata,(aes(fdata$season)))+geom_bar(stat="count")
+ggplot(fdata,aes(fdata$season,fdata$speed),fill=season)+geom_boxplot()
+#spring and summer has more delay than other seasons
+
+
+
+```
+################### 6.exploring with tailnum
+```{r}
+attach(fdata)
+#Number of flights travelled 
+length(levels(as.factor(fdata$tailnum)))
+trip=fdata[] %>% select(tailnum,day,month) %>% group_by(tailnum,month,day) %>% summarise(count = n())
+
+#maximum number of trips per month for each tailnum
+maxtrip_per_month=trip %>% group_by(tailnum,month)%>% summarise(count=sum(count,na.rm = TRUE)) %>%
+ summarise(avg_per_month=sum(count)/12)
+head(maxtrip_per_month)
+maxtrip_v=maxtrip_per_month %>% filter(avg_per_month>33)
+head(maxtrip_v)
+
+ggplot(maxtrip_v,aes(tailnum,avg_per_month)) +geom_bar(stat = "identity")  
+
+#from visulization N711MQ maximum  trips  throught the year
+
+
+
+
+
+
+
+
+
+```
+
